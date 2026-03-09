@@ -663,6 +663,7 @@ type ToolsConfig struct {
 	MCP             MCPConfig          `json:"mcp"`
 	LLMCallLog      LLMCallLogConfig   `json:"llm_call_log"`
 	ConversationLog ConversationLogConfig `json:"conversation_log"`
+	Sanitizer       SanitizerConfig    `json:"sanitizer"`
 	AppendFile      ToolConfig         `json:"append_file"                                              envPrefix:"PICOCLAW_TOOLS_APPEND_FILE_"`
 	EditFile        ToolConfig         `json:"edit_file"                                                envPrefix:"PICOCLAW_TOOLS_EDIT_FILE_"`
 	FindSkills      ToolConfig         `json:"find_skills"                                              envPrefix:"PICOCLAW_TOOLS_FIND_SKILLS_"`
@@ -691,6 +692,26 @@ type ConversationLogConfig struct {
 	Enabled  bool   `json:"enabled"   env:"PICOCLAW_TOOLS_CONVERSATION_LOG_ENABLED"`
 	LogDir   string `json:"log_dir"   env:"PICOCLAW_TOOLS_CONVERSATION_LOG_DIR"`
 	MaxFiles int    `json:"max_files" env:"PICOCLAW_TOOLS_CONVERSATION_LOG_MAX_FILES"`
+}
+
+// SanitizerConfig 配置敏感信息脱敏
+type SanitizerConfig struct {
+	Enabled        bool                  `json:"enabled"   env:"PICOCLAW_TOOLS_SANITIZER_ENABLED"`
+	Keywords       []SanitizerKeyword    `json:"keywords"`
+	CustomPatterns []SanitizerPattern    `json:"custom_patterns"`
+}
+
+// SanitizerKeyword 关键词脱敏规则
+type SanitizerKeyword struct {
+	Word string `json:"word"`
+	Tag  string `json:"tag"`
+}
+
+// SanitizerPattern 自定义正则脱敏规则
+type SanitizerPattern struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Tag     string `json:"tag"`
 }
 
 type SearchCacheConfig struct {

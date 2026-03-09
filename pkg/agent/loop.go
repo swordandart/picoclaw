@@ -357,16 +357,32 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 		}
 	}
 
-	for al.running.Load() {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
+	// Use a channel to decouple message consumption from message processing.
+	// This allows the main loop to continuously consume messages (including /stop)
+	// while processing happens in separate goroutines.
+	msgChan := make(chan bus.InboundMessage, 16)
+
+	// Start message consumer goroutine
+	go func() {
+		for al.running.Load() {
 			msg, ok := al.bus.ConsumeInbound(ctx)
 			if !ok {
 				continue
 			}
+			select {
+			case msgChan <- msg:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
+	// Main loop: process messages from channel
+	for al.running.Load() {
+		select {
+		case <-ctx.Done():
+			return nil
+		case msg := <-msgChan:
 			// Check if this is a command - commands are handled asynchronously
 			// so they can interrupt long-running tasks (e.g., /stop)
 			if commands.HasCommandPrefix(msg.Content) {
@@ -374,61 +390,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			// Process non-command message synchronously
-			func() {
-				// Create cancellable context for this message
-				msgCtx, msgCancel := context.WithCancel(ctx)
-				defer msgCancel()
-
-				// Store cancel function for /stop command
-				al.setCurrentCancel(msgCancel)
-				defer al.clearCurrentCancel()
-
-				response, err := al.processMessage(msgCtx, msg)
-				if err != nil {
-					// Check if the error is due to context cancellation (user issued /stop)
-					if errors.Is(err, context.Canceled) {
-						response = "⏹️ Task stopped."
-					} else {
-						response = fmt.Sprintf("Error processing message: %v", err)
-					}
-				}
-
-				if response != "" {
-					// Check if the message tool already sent a response during this round.
-					// If so, skip publishing to avoid duplicate messages to the user.
-					// Use default agent's tools to check (message tool is shared).
-					alreadySent := false
-					defaultAgent := al.registry.GetDefaultAgent()
-					if defaultAgent != nil {
-						if tool, ok := defaultAgent.Tools.Get("message"); ok {
-							if mt, ok := tool.(*tools.MessageTool); ok {
-								alreadySent = mt.HasSentInRound()
-							}
-						}
-					}
-
-					if !alreadySent {
-						al.bus.PublishOutbound(ctx, bus.OutboundMessage{
-							Channel: msg.Channel,
-							ChatID:  msg.ChatID,
-							Content: response,
-						})
-						logger.InfoCF("agent", "Published outbound response",
-							map[string]any{
-								"channel":     msg.Channel,
-								"chat_id":     msg.ChatID,
-								"content_len": len(response),
-							})
-					} else {
-						logger.DebugCF(
-							"agent",
-							"Skipped outbound (message tool already sent)",
-							map[string]any{"channel": msg.Channel},
-						)
-					}
-				}
-			}()
+			// Process non-command message in a goroutine
+			// This allows the main loop to continue consuming messages
+			go al.processMessageAsync(ctx, msg)
 		}
 	}
 
@@ -1728,6 +1692,65 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 	}
 	// 2.5 chars per token = totalChars * 2 / 5
 	return totalChars * 2 / 5
+}
+
+// processMessageAsync processes a non-command message in a goroutine.
+// This allows the main loop to continue consuming messages while processing.
+func (al *AgentLoop) processMessageAsync(ctx context.Context, msg bus.InboundMessage) {
+	// Create cancellable context for this message
+	msgCtx, msgCancel := context.WithCancel(ctx)
+	defer msgCancel()
+
+	// Store cancel function for /stop command
+	al.setCurrentCancel(msgCancel)
+	defer al.clearCurrentCancel()
+
+	response, err := al.processMessage(msgCtx, msg)
+	if err != nil {
+		// Check if the error is due to context cancellation (user issued /stop)
+		if errors.Is(err, context.Canceled) {
+			response = "⏹️ Task stopped."
+		} else {
+			response = fmt.Sprintf("Error processing message: %v", err)
+		}
+	}
+
+	if response != "" {
+		// Check if the message tool already sent a response during this round.
+		// If so, skip publishing to avoid duplicate messages to the user.
+		// Use default agent's tools to check (message tool is shared).
+		alreadySent := false
+		defaultAgent := al.registry.GetDefaultAgent()
+		if defaultAgent != nil {
+			if tool, ok := defaultAgent.Tools.Get("message"); ok {
+				if mt, ok := tool.(*tools.MessageTool); ok {
+					alreadySent = mt.HasSentInRound()
+				}
+			}
+		}
+
+		if !alreadySent {
+			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer pubCancel()
+			al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+				Channel: msg.Channel,
+				ChatID:  msg.ChatID,
+				Content: response,
+			})
+			logger.InfoCF("agent", "Published outbound response",
+				map[string]any{
+					"channel":     msg.Channel,
+					"chat_id":     msg.ChatID,
+					"content_len": len(response),
+				})
+		} else {
+			logger.DebugCF(
+				"agent",
+				"Skipped outbound (message tool already sent)",
+				map[string]any{"channel": msg.Channel},
+			)
+		}
+	}
 }
 
 // handleCommandAsync handles commands in a separate goroutine so they can
