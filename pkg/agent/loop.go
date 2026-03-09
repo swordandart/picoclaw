@@ -846,6 +846,12 @@ func (al *AgentLoop) runAgentLoop(
 	// 3. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
+		// If task was cancelled, save a placeholder message to session
+		// This prevents the user message from being orphaned without a response
+		if errors.Is(err, context.Canceled) {
+			agent.Sessions.AddMessage(opts.SessionKey, "assistant", "[Task cancelled by user]")
+			agent.Sessions.Save(opts.SessionKey)
+		}
 		return "", err
 	}
 
