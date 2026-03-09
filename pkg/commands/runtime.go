@@ -14,4 +14,5 @@ type Runtime struct {
 	SwitchModel        func(value string) (oldModel string, err error)
 	SwitchChannel      func(value string) error
 	CancelCurrentTask  func() bool // Cancel the currently running task, returns true if a task was cancelled
+	ClearHistory       func() error
 }
