@@ -52,6 +52,10 @@ type AgentLoop struct {
 	// Task cancellation support
 	currentCancel   context.CancelFunc
 	currentCancelMu sync.Mutex
+
+	// Token statistics for current session
+	tokenStats   *commands.TokenStats
+	tokenStatsMu sync.RWMutex
 }
 
 // processOptions configures how a message is processed
@@ -430,6 +434,34 @@ func (al *AgentLoop) CancelCurrentTask() bool {
 	al.currentCancel()
 	al.currentCancel = nil
 	return true
+}
+
+// updateTokenStats updates the token statistics for the current session.
+func (al *AgentLoop) updateTokenStats(model string, promptTokens, completionTokens int) {
+	al.tokenStatsMu.Lock()
+	defer al.tokenStatsMu.Unlock()
+
+	if al.tokenStats == nil {
+		al.tokenStats = &commands.TokenStats{Model: model}
+	}
+	al.tokenStats.PromptTokens += promptTokens
+	al.tokenStats.CompletionTokens += completionTokens
+	al.tokenStats.TotalTokens += promptTokens + completionTokens
+	al.tokenStats.CallCount++
+}
+
+// getTokenStats returns the current session's token statistics.
+func (al *AgentLoop) getTokenStats() *commands.TokenStats {
+	al.tokenStatsMu.RLock()
+	defer al.tokenStatsMu.RUnlock()
+	return al.tokenStats
+}
+
+// resetTokenStats resets the token statistics for a new session.
+func (al *AgentLoop) resetTokenStats() {
+	al.tokenStatsMu.Lock()
+	defer al.tokenStatsMu.Unlock()
+	al.tokenStats = nil
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -1165,6 +1197,12 @@ func (al *AgentLoop) runLLMIteration(
 				"target_channel": al.targetReasoningChannelID(opts.Channel),
 				"channel":        opts.Channel,
 			})
+
+		// Update token statistics for current session
+		if response.Usage != nil {
+			al.updateTokenStats(activeModel, response.Usage.PromptTokens, response.Usage.CompletionTokens)
+		}
+
 		// Check if no tool calls - then check reasoning content if any
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
@@ -1871,7 +1909,9 @@ func (al *AgentLoop) handleCommandAsync(ctx context.Context, msg bus.InboundMess
 
 	response, handled := al.handleCommand(ctx, msg, agent, opts)
 	if !handled {
-		// Command not recognized or passed through, ignore
+		// Command not recognized or passed through (e.g., strict command with extra args)
+		// Process as normal message through the agent
+		al.processMessageAsync(ctx, msg)
 		return
 	}
 
@@ -1955,6 +1995,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			return nil
 		},
 		CancelCurrentTask: al.CancelCurrentTask,
+		GetTokenStats:     al.getTokenStats,
 	}
 	if agent != nil {
 		rt.GetModelInfo = func() (string, string) {

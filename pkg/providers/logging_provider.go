@@ -66,7 +66,9 @@ func (p *LoggingProvider) Chat(
 	} else {
 		record.Response = resp.Content
 		if resp.Usage != nil {
-			record.TokensUsed = resp.Usage.TotalTokens
+			record.PromptTokens = resp.Usage.PromptTokens
+			record.CompletionTokens = resp.Usage.CompletionTokens
+			record.TotalTokens = resp.Usage.TotalTokens
 		}
 	}
 

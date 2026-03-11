@@ -20,6 +20,7 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/migrate"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/onboard"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/skills"
+	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/stats"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/status"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/version"
 )
@@ -42,6 +43,7 @@ func NewPicoclawCommand() *cobra.Command {
 		cron.NewCronCommand(),
 		migrate.NewMigrateCommand(),
 		skills.NewSkillsCommand(),
+		stats.NewStatsCommand(),
 		version.NewVersionCommand(),
 	)
 
